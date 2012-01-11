@@ -1,0 +1,22 @@
+*.o
+
+#Generated files.
+*.m4
+*.in~
+*.plist
+.deps/
+m4/
+autom4te.cache/
+Makefile
+Makefile.in
+config.h
+config.h.in
+config.log
+config.status
+configure
+missing
+depcomp
+libtool
+stamp-h1
+install-sh
+.dirstamp
