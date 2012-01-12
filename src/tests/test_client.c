@@ -4,12 +4,13 @@
 #include <sys/socket.h>
 
 #include <event2/event.h>
+#include <event2/buffer.h>
 #include <event2/bufferevent.h>
 
 #include "../lobby.h"
 
 //How often to send ping.
-static const struct timeval ping_interval = {5,0}; //5 secs.
+static const struct timeval ping_interval = {LOBBY_SEND_INTERVAL, 0};
 
 struct connection {
     int id;
@@ -39,29 +40,31 @@ struct connection * connection_get_by_id(int id);
 void readcb(struct bufferevent *bev, void *ptr)
 {
     struct connection * con = ptr;
-    struct lobby_packet_register reg_packet;
+    struct lobby_packet_info info_packet;
     int n;  
     
-    n = bufferevent_read(bev, &reg_packet, sizeof(reg_packet));
-    if (n == sizeof(reg_packet)) {
-        printf("-> Client %d: Got reg_packet back! Name: %s\n", con->id, reg_packet.server_name);
+    n = bufferevent_read(con->bev, &info_packet, sizeof(info_packet));
+    if (n == sizeof(info_packet)) {
+        printf("-> Client %d: Lobby server version: %d.%d\n", con->id,
+            info_packet.ver_major, info_packet.ver_minor);
     } else {
-        
-        //printf("-> Client %d: Didn't get full packet back (%d).\n", con->id, n);
+        printf("-> Client %d: Received garbage. Shutting down.\n", con->id);
+        connection_free(con);
     }
 }
 
 //Gets called each time it's time to ping the server.
 void pingcb(evutil_socket_t fd, short events, void *ptr)
 {
-    int r;
     struct connection * con = ptr;
     struct lobby_packet_empty ping_packet;
+    int failed;
     
     ping_packet.packet_id = PING;
-    
-    r = bufferevent_write(con->bev, (const void *) &ping_packet, sizeof(ping_packet));
-    if(r) {
+
+    failed = bufferevent_write(con->bev, (const void *) &ping_packet,
+                               sizeof(ping_packet));
+    if (failed) {
         printf("Clinet %d: Failed to send PING!\n", con->id);
     }
 }
@@ -69,25 +72,45 @@ void pingcb(evutil_socket_t fd, short events, void *ptr)
 //Gets called when there is something to read from get list connection.
 void list_readcb(struct bufferevent *bev, void *ptr)
 {
+    struct evbuffer *input = bufferevent_get_input(bev);
+    enum lobby_packet_type packet_id;
+    struct lobby_packet_info info_packet;
     struct lobby_packet_list list_packet;
     struct lobby_list_item item;
     int n;  
     
-    n = bufferevent_read(bev, &list_packet, sizeof(list_packet));
-    if (n == sizeof(list_packet)) {
-        printf("-> list: Got list_packet!\n");
-    } else {
-        printf("-> list: list_packet has wrong size!");
+    evbuffer_copyout(input, (void *) &packet_id,
+                     sizeof(enum lobby_packet_type));
+    
+    switch (packet_id) {
+        case INFO:
+            n = bufferevent_read(bev, &info_packet, sizeof(info_packet));
+            if (n == sizeof(info_packet)) {
+                printf("-> list: Lobby server version: %d.%d!\n",
+                    info_packet.ver_major, info_packet.ver_minor);
+            } else {
+                printf("-> list: Got info_packet with wrong size!\n");
+            }
+            break;
+        case LIST:
+            n = bufferevent_read(bev, &list_packet, sizeof(list_packet));
+            if (n != sizeof(list_packet)) {
+                printf("-> list: Got list_packet with wrong size!\n");
+            }
+            bufferevent_free(bev);
+            break;
+        default:
+            printf("-> list: got garbage! (%d)\n", packet_id);
+            bufferevent_free(bev);
     }
-    bufferevent_free(bev);
 }
 
 //General event callback for all server connections.
 void eventcb(struct bufferevent *bev, short events, void *ptr)
 {
-    int r;
     struct connection * con = ptr;
     struct lobby_packet_register reg_packet;
+    int failed;
     
     if (events & BEV_EVENT_CONNECTED) {
         printf("-> Client %d: connected!\n", con->id);
@@ -96,12 +119,14 @@ void eventcb(struct bufferevent *bev, short events, void *ptr)
             reg_packet.packet_id = REGISTER;
             reg_packet.server_port = 3133 + con->id;
             strncpy((char *) reg_packet.server_name, "Test Server ", 256);
-            snprintf((char *)&(reg_packet.server_name[12]), 256 - 12, "%d", con->id);
+            snprintf((char *) &(reg_packet.server_name[12]), 256 - 12, "%d",
+                     con->id);
             
             //Send it.
             printf("-> Client %d: Sending register packet ... ", con->id);
-            r = bufferevent_write(con->bev, (const void *) &reg_packet, sizeof(reg_packet));
-            if(r) {
+            failed = bufferevent_write(con->bev, (const void *) &reg_packet,
+                                       sizeof(reg_packet));
+            if(failed) {
                 printf("failed!\n");
             } else {
                 printf("done!\n");
@@ -117,6 +142,10 @@ void eventcb(struct bufferevent *bev, short events, void *ptr)
     if (events & BEV_EVENT_EOF) {
         printf("-> Client %d: Server closed connection.\n", con->id);
     }
+    
+    if (events & (BEV_EVENT_ERROR | BEV_EVENT_EOF)) {
+        connection_free(con);
+    }
 }
 
 //General event callback for get list connection.
@@ -130,7 +159,8 @@ void list_eventcb(struct bufferevent *bev, short events, void *ptr)
         get_list_packet.packet_id = GET_LIST;
         //Send it.
         printf("-> list: Sending GET_LIST packet ... ");
-        r = bufferevent_write(bev, (const void *) &get_list_packet, sizeof(get_list_packet));
+        r = bufferevent_write(bev, (const void *) &get_list_packet,
+                              sizeof(get_list_packet));
         if(r) {
             printf("failed!\n");
         } else {
@@ -141,6 +171,9 @@ void list_eventcb(struct bufferevent *bev, short events, void *ptr)
     }
     if (events & BEV_EVENT_EOF) {
         printf("-> list: Server closed connection.\n");
+    }
+    if (events & (BEV_EVENT_ERROR | BEV_EVENT_EOF)) {
+        bufferevent_free(bev);
     }
 }
 
@@ -154,7 +187,7 @@ void input_handler(struct bufferevent *bev, void *ptr)
     struct connection *con = NULL;
     char buffer[256] = {0};
     char * pch;
-    int n, r, id;
+    int n, failed, id, count;
     unsigned int port;
     n = bufferevent_read(bev, &buffer, 256);
     buffer[255] = '\0';
@@ -185,8 +218,8 @@ void input_handler(struct bufferevent *bev, void *ptr)
             printf("mass_add: not enough parameters.\n");
             return;
         }
-        r = atoi(pch);
-        while (r--){
+        count = atoi(pch);
+        while (count--){
             connection_new(base, 1);
         }
     } else if (!strncmp(pch, "close", n)) {
@@ -233,8 +266,9 @@ void input_handler(struct bufferevent *bev, void *ptr)
         strncpy((char *) reg_packet.server_name, pch, 256);
         //Send it.
         printf("-> Client %d: Sending register packet ... ", con->id);
-        r = bufferevent_write(con->bev, (const void *) &reg_packet, sizeof(reg_packet));
-        if(r) {
+        failed = bufferevent_write(con->bev, (const void *) &reg_packet,
+                              sizeof(reg_packet));
+        if(failed) {
             printf("failed!\n");
         } else {
             printf("done!\n");
@@ -251,7 +285,9 @@ void input_handler(struct bufferevent *bev, void *ptr)
         bufferevent_enable(list_bev, EV_READ|EV_WRITE);
         
         printf("-> Connecting to localhost ... ");
-        if (bufferevent_socket_connect(list_bev, (struct sockaddr *)&sin, sizeof(sin)) < 0) {
+        failed = bufferevent_socket_connect(list_bev, (struct sockaddr *)&sin,
+                                            sizeof(sin));
+        if (failed) {
             printf("failed!\n");
             bufferevent_free(list_bev);
             return;
@@ -281,13 +317,20 @@ int main(void) {
     
     //Print some help.
     printf("Lobby Server Tester. Available commands:\n");
-    printf(" %-40s Starts a new server connection.\n", "add register");
-    printf(" %-40s Starts several new server connections.\n", "mass_add count");
-    printf(" %-40s Close a specific server connections\n", "close client_id");
-    printf(" %-40s Manually register server.\n", "register client_id port server_name");
-    printf(" %-40s Manually update server. (not implemented)\n", "update ...");
-    printf(" %-40s Request server list.\n", "list");
-    printf(" %-40s Exit Lobby Server Tester.\n", "exit");
+    printf(" %-40s Starts a new server connection.\n",
+           "add register");
+    printf(" %-40s Starts several new server connections.\n",
+           "mass_add count");
+    printf(" %-40s Close a specific server connections\n",
+           "close client_id");
+    printf(" %-40s Manually register server.\n",
+           "register client_id port server_name");
+    printf(" %-40s Manually update server. (not implemented)\n",
+           "update ...");
+    printf(" %-40s Request server list.\n",
+           "list");
+    printf(" %-40s Exit Lobby Server Tester.\n",
+           "exit");
     
     //Start up the main event base loop.
     event_base_dispatch(base);
@@ -300,7 +343,8 @@ int main(void) {
 
 //Create a new server connection.
 int connection_new(struct event_base *base, int reg) {
-    struct connection * con = (struct connection *) malloc(sizeof(struct connection));
+    struct connection * con = malloc(sizeof(struct connection));
+    int failed;
     
     con->id = ++last_id;
     con->reg = 0;
@@ -315,7 +359,9 @@ int connection_new(struct event_base *base, int reg) {
     
     printf("-> Client id is %d.\n", con->id);
     printf("-> Connecting to localhost ... ");
-    if (bufferevent_socket_connect(con->bev, (struct sockaddr *)&sin, sizeof(sin)) < 0) {
+    failed = bufferevent_socket_connect(con->bev, (struct sockaddr *)&sin,
+                                        sizeof(sin));
+    if (failed) {
         printf("failed!\n");
         bufferevent_free(con->bev);
         free(con);
@@ -352,7 +398,6 @@ void connection_free(struct connection *con) {
     if (con->bev) {
         bufferevent_free(con->bev);
     }
-    event_del(con->pingev);
     event_free(con->pingev);
     free(con);
 }
@@ -367,7 +412,6 @@ void connection_free_all(void) {
         if (tail->bev) {
             bufferevent_free(tail->bev);
         }
-        event_del(tail->pingev);
         event_free(tail->pingev);
         free(tail);
         tail = temp;

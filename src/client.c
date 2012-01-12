@@ -34,9 +34,13 @@ client_free_client(struct client *c)
     if (c->prev != NULL) {
         c->prev->next = c->next;
     }
-    
+    //Free the socket bufferinfo, automatically disconnects.
     if (c->buf_event) {
         bufferevent_free(c->buf_event);
+    }
+    //If has server info, free it.
+    if (c->info) {
+        free(c->info);
     }
 
     free(c);
@@ -50,8 +54,13 @@ client_free_all_clients(void)
     while(temp) {
         temp = all_clients->prev;
         
+        //Free the socket bufferinfo, automatically disconnects.
         if (all_clients->buf_event) {
             bufferevent_free(all_clients->buf_event);
+        }
+        //If has server info, free it.
+        if (all_clients->info) {
+            free(all_clients->info);
         }
         
         free(all_clients);
