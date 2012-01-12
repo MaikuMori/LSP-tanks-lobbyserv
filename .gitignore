@@ -1,9 +1,13 @@
+#Our 2 binaries.
+lobbyserv
+lobbytest
 *.o
 
 #Generated files.
 *.m4
 *.in~
 *.plist
+*.gch
 .deps/
 m4/
 autom4te.cache/

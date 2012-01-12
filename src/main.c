@@ -32,10 +32,14 @@ bool debug = false;
 static void
 echo_read_cb(struct bufferevent *bev, void *ctx)
 {
+    struct client * c = (struct client *) ctx;
+        
     /* This callback is invoked when there is data to read on bev. */
     struct evbuffer *input = bufferevent_get_input(bev);
     struct evbuffer *output = bufferevent_get_output(bev);
 
+    printf("New data from client.\n");
+    
     /* Copy all the data from the input buffer to the output buffer. */
     evbuffer_add_buffer(output, input);
 }
@@ -56,6 +60,7 @@ accept_conn_cb(struct evconnlistener *listener,
     void *ctx)
 {
     //We got a connection.
+    printf("New connection received.\n");
     struct client *c = client_new_client();
     
     /* We got a new connection! Set up a bufferevent for it. */

@@ -62,5 +62,7 @@ client_free_all_clients(void)
         }
         
         free(all_clients);
+        
+        all_clients = temp;
     }
 }

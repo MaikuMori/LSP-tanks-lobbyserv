@@ -2,6 +2,8 @@
 	
 */
 
+#include <inttypes.h>
+
 //Used for 'packet_id'.
 enum __attribute__((packed)) lobby_packet_type {
 	PING,
@@ -11,7 +13,7 @@ enum __attribute__((packed)) lobby_packet_type {
 	LIST
 };
 
-//Ping packet.
+//Ping packet or get list packet.
 struct lobby_packet_empty {
 	enum lobby_packet_type packet_id;
 };
@@ -21,7 +23,7 @@ struct __attribute__((packed)) lobby_packet_register {
 	enum lobby_packet_type packet_id;
 	
 	//Information about server.
-	uint8_t server_name[255];
+	uint8_t server_name[256];
 	uint32_t server_port;
 };
 
@@ -34,7 +36,7 @@ struct __attribute__((packed)) lobby_packet_update {
 	uint8_t players_current;
 	
 	//Information about the current map.
-	uint8_t map_name[255];
+	uint8_t map_name[256];
 	uint16_t map_size_x;
 	uint16_t map_size_y;
 };
@@ -42,7 +44,7 @@ struct __attribute__((packed)) lobby_packet_update {
 //List item.
 struct lobby_list_item {
 	//Information about server.
-	uint8_t server_name[255];
+	uint8_t server_name[256];
 	uint8_t server_ip[4];
 	uint32_t server_port;
 
@@ -51,7 +53,7 @@ struct lobby_list_item {
 	uint8_t players_current;
 	
 	//Information about the current map.
-	uint8_t map_name[255];
+	uint8_t map_name[256];
 	uint16_t map_size_x;
 	uint16_t map_size_y;
 };
