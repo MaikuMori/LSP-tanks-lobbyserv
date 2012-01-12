@@ -79,6 +79,7 @@ void list_readcb(struct bufferevent *bev, void *ptr)
     } else {
         printf("-> list: list_packet has wrong size!");
     }
+    bufferevent_free(bev);
 }
 
 //General event callback for all server connections.
@@ -188,6 +189,21 @@ void input_handler(struct bufferevent *bev, void *ptr)
         while (r--){
             connection_new(base, 1);
         }
+    } else if (!strncmp(pch, "close", n)) {
+        pch = strtok(NULL, " \n");
+        if (!pch) {
+            printf("register: not enough parameters.\n");
+            return;
+        }
+        id = atoi(pch);
+        con = connection_get_by_id(id);
+        if (!con) {
+            printf("register: no client with that id (%d).\n", id);
+            return;
+        }
+        printf("-> Client %d: Closing connection ...", con->id);
+        connection_free(con);
+        printf("done!\n");
     } else if (!strncmp(pch, "register", n)) {
         //Find the client by id.
         pch = strtok(NULL, " \n");
@@ -267,6 +283,7 @@ int main(void) {
     printf("Lobby Server Tester. Available commands:\n");
     printf(" %-40s Starts a new server connection.\n", "add register");
     printf(" %-40s Starts several new server connections.\n", "mass_add count");
+    printf(" %-40s Close a specific server connections\n", "close client_id");
     printf(" %-40s Manually register server.\n", "register client_id port server_name");
     printf(" %-40s Manually update server. (not implemented)\n", "update ...");
     printf(" %-40s Request server list.\n", "list");

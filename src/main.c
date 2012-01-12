@@ -25,32 +25,68 @@
     #define CONF_FILE "./lts.conf"
 #endif
 
+#include "lobby.h"
 #include "client.h"
 
 bool debug = false;
 
 static void
-echo_read_cb(struct bufferevent *bev, void *ctx)
+readcb(struct bufferevent *bev, void *ctx)
 {
-    struct client * c = (struct client *) ctx;
-        
-    /* This callback is invoked when there is data to read on bev. */
+    struct client * c = ctx;
     struct evbuffer *input = bufferevent_get_input(bev);
-    struct evbuffer *output = bufferevent_get_output(bev);
-
-    printf("New data from client.\n");
+    enum lobby_packet_type packet_id;
     
-    /* Copy all the data from the input buffer to the output buffer. */
-    evbuffer_add_buffer(output, input);
+    struct lobby_packet_empty empty_packet;
+    struct lobby_packet_register register_packet;
+    struct lobby_packet_update update_packet;
+    
+    int n;
+    
+    evbuffer_copyout(input, (void *) &packet_id, sizeof(enum lobby_packet_type));
+    
+    switch (packet_id) {
+        case PING:
+            printf("[%s] Got PING packet!\n",
+                inet_ntoa(c->address.sin_addr));
+            n = bufferevent_read(bev, &empty_packet, sizeof(empty_packet));
+            break;
+        case REGISTER:
+            printf("[%s] Got REGISTER packet!\n",
+                inet_ntoa(c->address.sin_addr));
+            n = bufferevent_read(bev, &register_packet, sizeof(register_packet));
+            break;
+        case UPDATE:
+            printf("[%s] Got UPDATE packet!\n",
+                inet_ntoa(c->address.sin_addr));
+            n = bufferevent_read(bev, &update_packet, sizeof(update_packet));
+            break;
+        case GET_LIST:
+            printf("[%s] Got GET_LIST packet!\n",
+                inet_ntoa(c->address.sin_addr));
+            n = bufferevent_read(bev, &empty_packet, sizeof(empty_packet));
+            break;
+        default:
+            printf("[%s] Got unknown packet!\n",
+                inet_ntoa(c->address.sin_addr));
+            break;
+    }
 }
 
 static void
-echo_event_cb(struct bufferevent *bev, short events, void *ctx)
+eventcb(struct bufferevent *bev, short events, void *ctx)
 {
-    if (events & BEV_EVENT_ERROR)
+    struct client * c = ctx;
+    if (events & BEV_EVENT_ERROR) {
         perror("Error from bufferevent");
+    }
+    if (events & BEV_EVENT_EOF) {
+        printf("[%s] Client closed connection.\n",
+             inet_ntoa(c->address.sin_addr));
+     }
+        
     if (events & (BEV_EVENT_EOF | BEV_EVENT_ERROR)) {
-        bufferevent_free(bev);
+        client_free_client(c);
     }
 }
 
@@ -59,17 +95,21 @@ accept_conn_cb(struct evconnlistener *listener,
     evutil_socket_t fd, struct sockaddr *address, int socklen,
     void *ctx)
 {
+    struct sockaddr_in * addr = (struct sockaddr_in *) address;
     //We got a connection.
-    printf("New connection received.\n");
+    printf("[%s] New connection received.\n",
+                inet_ntoa(addr->sin_addr));
     struct client *c = client_new_client();
     
     /* We got a new connection! Set up a bufferevent for it. */
     c->evloop = evconnlistener_get_base(listener);
     c->buf_event = bufferevent_socket_new(
             c->evloop, fd, BEV_OPT_CLOSE_ON_FREE);
+    
+    memcpy(&(c->address), address, sizeof(struct sockaddr));
 
-    bufferevent_setcb(c->buf_event, echo_read_cb, NULL,
-                      echo_event_cb, (void *) c);
+    bufferevent_setcb(c->buf_event, readcb, NULL,
+                      eventcb, (void *) c);
 
     bufferevent_enable(c->buf_event, EV_READ|EV_WRITE);
 }

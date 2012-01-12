@@ -25,24 +25,20 @@ client_new_client(void)
 void
 client_free_client(struct client *c)
 {
-    if (c->next) {
+    if (c->next != NULL) {
         c->next->prev = c->prev;
     } else {
         all_clients = c->prev;
-        all_clients->next = NULL;
     }
-    
-    if (c->prev) {
+
+    if (c->prev != NULL) {
         c->prev->next = c->next;
     }
     
     if (c->buf_event) {
         bufferevent_free(c->buf_event);
     }
-    if (c->buffer) {
-        evbuffer_free(c->buffer);   
-    }
-    
+
     free(c);
 }
 
@@ -56,9 +52,6 @@ client_free_all_clients(void)
         
         if (all_clients->buf_event) {
             bufferevent_free(all_clients->buf_event);
-        }
-        if (all_clients->buffer) {
-            evbuffer_free(all_clients->buffer);   
         }
         
         free(all_clients);

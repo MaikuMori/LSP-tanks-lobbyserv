@@ -9,8 +9,8 @@ struct client {
 	struct event_base *evloop;
 	//Clients I/O event.
 	struct bufferevent *buf_event;
-	//Output buffer.
-	struct evbuffer *buffer;
+	//Address.
+	struct sockaddr_in address;
 	//Linked list.
 	struct client *prev, *next;
 };
