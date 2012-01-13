@@ -62,7 +62,7 @@ pingcb(evutil_socket_t fd, short events, void *ptr)
     struct lobby_packet_empty ping_packet;
     int failed;
     
-    ping_packet.packet_id = PING;
+    ping_packet.packet_id = LOBBY_PING;
 
     failed = bufferevent_write(con->bev, (const void *) &ping_packet,
                                sizeof(ping_packet));
@@ -95,7 +95,7 @@ list_readcb(struct bufferevent *bev, void *ptr)
         }
         
         switch (packet_id) {
-            case INFO:
+            case LOBBY_INFO:
                 n = bufferevent_read(bev, &info_packet, sizeof(info_packet));
                 if (n == sizeof(info_packet)) {
                     printf("-> list: Lobby server version: %d.%d!\n",
@@ -106,7 +106,7 @@ list_readcb(struct bufferevent *bev, void *ptr)
                     return;
                 }
                 break;
-            case LIST:
+            case LOBBY_LIST:
                 //Allocate without the items.
                 list_packet = malloc(sizeof(struct lobby_packet_list));
                 n = bufferevent_read(bev, list_packet,
@@ -157,7 +157,7 @@ eventcb(struct bufferevent *bev, short events, void *ptr)
         printf("-> Client %d: connected!\n", con->id);
         if (con->auto_reg) {
             //Fill the REGISTER packet.
-            reg_packet.packet_id = REGISTER;
+            reg_packet.packet_id = LOBBY_REGISTER;
             reg_packet.server_port = 3133 + con->id;
             strncpy((char *) reg_packet.server_name, "Test Server ", 256);
             snprintf((char *) &(reg_packet.server_name[12]), 256 - 12, "%d",
@@ -198,7 +198,7 @@ list_eventcb(struct bufferevent *bev, short events, void *ptr)
     
     if (events & BEV_EVENT_CONNECTED) {
         printf("-> list: connection made!\n");
-        get_list_packet.packet_id = GET_LIST;
+        get_list_packet.packet_id = LOBBY_GET_LIST;
         //Send it.
         printf("-> list: Sending GET_LIST packet ... ");
         r = bufferevent_write(bev, (const void *) &get_list_packet,
@@ -294,7 +294,7 @@ input_handler(struct bufferevent *bev, void *ptr)
             return;
         }
         //Fill the register packet.
-        reg_packet.packet_id = REGISTER;
+        reg_packet.packet_id = LOBBY_REGISTER;
         pch = strtok(NULL, " \n");
         if (!pch) {
             printf("register: not enough parameters.\n");

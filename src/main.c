@@ -63,7 +63,7 @@ readcb(struct bufferevent *bev, void *ctx)
                      sizeof(enum lobby_packet_type));
     
     switch (packet_id) {
-        case PING:
+        case LOBBY_PING:
             n = bufferevent_read(bev, &empty_packet, sizeof(empty_packet));
             if (n != sizeof(empty_packet)) {
                 syslog(LOG_WARNING, "[%s] Got PING packet with "
@@ -71,7 +71,7 @@ readcb(struct bufferevent *bev, void *ctx)
                 client_free_client(c);
             }
             break;
-        case REGISTER:
+        case LOBBY_REGISTER:
             n = bufferevent_read(bev, &register_packet,
                                  sizeof(register_packet));
             if (n == sizeof(register_packet)) {
@@ -90,7 +90,7 @@ readcb(struct bufferevent *bev, void *ctx)
                 client_free_client(c);
             }
             break;
-        case UPDATE:
+        case LOBBY_UPDATE:
             n = bufferevent_read(bev, &update_packet, sizeof(update_packet));
             if (n == sizeof(update_packet)) {
                 if (c->info) {
@@ -115,7 +115,7 @@ readcb(struct bufferevent *bev, void *ctx)
                 client_free_client(c);
             }
             break;
-        case GET_LIST:
+        case LOBBY_GET_LIST:
             n = bufferevent_read(bev, &empty_packet, sizeof(empty_packet));
             if (n == sizeof(empty_packet)) {
                 item_count = 0;
@@ -129,7 +129,7 @@ readcb(struct bufferevent *bev, void *ctx)
                 list_packet = malloc(sizeof(struct lobby_packet_list) + 
                                      sizeof(struct lobby_list_item) *
                                      item_count);
-                list_packet->packet_id = LIST;
+                list_packet->packet_id = LOBBY_LIST;
                 list_packet->item_count = item_count;
                 
                 i = 0;
@@ -381,7 +381,7 @@ main(int argc, char **argv)
     strncpy(major, PACKAGE_VERSION, dot_pos);
     major[dot_pos+1] = '\0';
     strcpy(minor, &PACKAGE_VERSION[dot_pos + 1]);
-    info_packet.packet_id = INFO;
+    info_packet.packet_id = LOBBY_INFO;
     info_packet.ver_major = atoi(major);
     info_packet.ver_minor = atoi(minor);
         

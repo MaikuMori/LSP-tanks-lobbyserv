@@ -31,12 +31,12 @@
 
 //Used for 'packet_id'.
 enum __attribute__((packed)) lobby_packet_type {
-    PING,
-    REGISTER,
-    UPDATE,
-    GET_LIST,
-    LIST,
-    INFO
+    LOBBY_PING,
+    LOBBY_REGISTER,
+    LOBBY_UPDATE,
+    LOBBY_GET_LIST,
+    LOBBY_LIST,
+    LOBBY_INFO
 };
 //Could add ERROR packet so it's possible to send some error messages
 //back before closing connection. At the moment connection is just
