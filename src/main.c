@@ -9,6 +9,10 @@
 #include <string.h>
 #include <errno.h>
 #include <err.h>
+//Logging.
+#include <syslog.h>
+//Files.
+#include <fcntl.h>
 
 #include <event2/event.h>
 #include <event2/listener.h>
@@ -54,23 +58,20 @@ readcb(struct bufferevent *bev, void *ctx)
     
     int i, n, item_count, failed;
     
+    //Peak at packet_id.
     evbuffer_copyout(input, (void *) &packet_id,
                      sizeof(enum lobby_packet_type));
     
     switch (packet_id) {
         case PING:
-            printf("[%s] Got PING packet!\n",
-                inet_ntoa(c->address.sin_addr));
             n = bufferevent_read(bev, &empty_packet, sizeof(empty_packet));
             if (n != sizeof(empty_packet)) {
-                printf("[%s] Got PING packet with wrong size.\n",
-                       inet_ntoa(c->address.sin_addr));
+                syslog(LOG_WARNING, "[%s] Got PING packet with "
+                       "bad size (%d).", inet_ntoa(c->address.sin_addr), n);    
                 client_free_client(c);
             }
             break;
         case REGISTER:
-            printf("[%s] Got REGISTER packet!\n",
-                inet_ntoa(c->address.sin_addr));
             n = bufferevent_read(bev, &register_packet,
                                  sizeof(register_packet));
             if (n == sizeof(register_packet)) {
@@ -84,14 +85,12 @@ readcb(struct bufferevent *bev, void *ctx)
                     c->info->server_name[LOBBY_STR_LEN - 1] = '\0';
                 }
             } else {
-                printf("[%s] Got REGISTER packet with wrong size.\n",
-                       inet_ntoa(c->address.sin_addr));
+                syslog(LOG_WARNING, "[%s] Got REGISTER packet with "
+                       "bad size (%d).", inet_ntoa(c->address.sin_addr), n);       
                 client_free_client(c);
             }
             break;
         case UPDATE:
-            printf("[%s] Got UPDATE packet!\n",
-                   inet_ntoa(c->address.sin_addr));
             n = bufferevent_read(bev, &update_packet, sizeof(update_packet));
             if (n == sizeof(update_packet)) {
                 if (c->info) {
@@ -106,19 +105,17 @@ readcb(struct bufferevent *bev, void *ctx)
                     c->info->map_size_x = update_packet.map_size_x;
                     c->info->map_size_y = update_packet.map_size_y;
                 } else {
-                    printf("[%s] Got UPDATE packet before REGISTER packet.\n",
-                           inet_ntoa(c->address.sin_addr));
+                    syslog(LOG_INFO, "[%s] Got UPDATE packet before "
+                           "REGISTER packet.", inet_ntoa(c->address.sin_addr));
                     client_free_client(c);
                 }
             } else {
-                printf("[%s] Got UPDATE packet with wrong size.\n",
-                       inet_ntoa(c->address.sin_addr));
+                syslog(LOG_WARNING, "[%s] Got UPDATE packet with "
+                       "bad size (%d).", inet_ntoa(c->address.sin_addr), n);
                 client_free_client(c);
             }
             break;
         case GET_LIST:
-            printf("[%s] Got GET_LIST packet!\n",
-                   inet_ntoa(c->address.sin_addr));
             n = bufferevent_read(bev, &empty_packet, sizeof(empty_packet));
             if (n == sizeof(empty_packet)) {
                 item_count = 0;
@@ -175,22 +172,22 @@ readcb(struct bufferevent *bev, void *ctx)
                                      sizeof(struct lobby_list_item) *
                                      list_packet->item_count);
                 if(failed) {
-                    printf("[%s] Failed to send LIST packet.\n",
-                           inet_ntoa(c->address.sin_addr));    
+                    syslog(LOG_WARNING, "[%s] Failed to send LIST packet.",
+                           inet_ntoa(c->address.sin_addr));
                     client_free_client(c);          
                 }
                  
                 //Free the monster.
                 free(list_packet);
             } else {
-                printf("[%s] Got PING packet with wrong size.\n",
-                       inet_ntoa(c->address.sin_addr));
+                syslog(LOG_WARNING, "[%s] Got GET_LIST packet with "
+                       "bad size (%d).", inet_ntoa(c->address.sin_addr), n);
                 client_free_client(c);
             }
             break;
         default:
-            printf("[%s] Got unknown packet!\n",
-                   inet_ntoa(c->address.sin_addr));
+            syslog(LOG_WARNING, "[%s] Got unknown packet (%d)!",
+                   inet_ntoa(c->address.sin_addr), packet_id);
             //Just drop the connection.
             client_free_client(c);
             break;
@@ -202,19 +199,23 @@ eventcb(struct bufferevent *bev, short events, void *ctx)
 {
     struct client *c = ctx;
     struct lobby_packet_info info_packet;
+    int err;
     
     //Print error.
     if (events & BEV_EVENT_ERROR) {
-        perror("Error from bufferevent");
+        err = EVUTIL_SOCKET_ERROR();
+        syslog(LOG_WARNING, "[%s] Bufferevent error %d: %s.",
+               inet_ntoa(c->address.sin_addr),
+               err, evutil_socket_error_to_string(err));
     }
     //Client closed connection.
     if (events & BEV_EVENT_EOF) {
-        printf("[%s] Client closed connection.\n",
+        syslog(LOG_INFO, "[%s] Client closed connection.",
                inet_ntoa(c->address.sin_addr));
     }
     //Client timed out.
     if (events & BEV_EVENT_TIMEOUT) {
-        printf("[%s] Client timed out.\n",
+        syslog(LOG_INFO, "[%s] Client timed out.",
                inet_ntoa(c->address.sin_addr));
     }
     
@@ -232,9 +233,11 @@ accept_conn_cb(struct evconnlistener *listener,
 {
     struct sockaddr_in * addr = (struct sockaddr_in *) address;
     int failed = 0;
+    
     //We got a connection.
-    printf("[%s] New connection received.\n",
-           inet_ntoa(addr->sin_addr));
+    syslog(LOG_INFO, "[%s] New connection received.",
+          inet_ntoa(addr->sin_addr));
+          
     struct client *c = client_new_client();
     
     /* We got a new connection! Set up a bufferevent for it. */
@@ -247,18 +250,18 @@ accept_conn_cb(struct evconnlistener *listener,
     //Enable timeouts.
     bufferevent_set_timeouts(c->buf_event, &timeout_interval,
                              &timeout_interval);
-
+    ///Set callbacks.
     bufferevent_setcb(c->buf_event, readcb, NULL,
                     eventcb, (void *) c);
-
+    //Enable both reading and writing.
     bufferevent_enable(c->buf_event, EV_READ|EV_WRITE);
     
     //Send INFO packet.
     failed = bufferevent_write(c->buf_event, (const void *) &info_packet,
                         sizeof(info_packet));
     if(failed) {
-        printf("[%s] Failed to send INFO packet.\n",
-               inet_ntoa(c->address.sin_addr));              
+        syslog(LOG_WARNING, "[%s] Failed to send INFO packet.",
+               inet_ntoa(c->address.sin_addr));
     }
 }
 
@@ -267,26 +270,87 @@ accept_error_cb(struct evconnlistener *listener, void *ctx)
 {
     struct event_base *base = evconnlistener_get_base(listener);
     int err = EVUTIL_SOCKET_ERROR();
-    printf("Got an error %d (%s) on the listener. "
-            "Shutting down.\n", err, evutil_socket_error_to_string(err));
+    syslog(LOG_ALERT, "Got an error %d (%s) on the listener."
+           "Shutting down.", err, evutil_socket_error_to_string(err));
 
     event_base_loopexit(base, NULL);
+}
+
+static void
+sigterm_cb(evutil_socket_t fd, short events, void *ptr)
+{
+    struct event_base *base = (struct event_base *) ptr;
+    syslog(LOG_WARNING, "Got SIGTERM. Shutting down!");
+    client_free_all_clients();
+    event_base_loopexit(base, NULL);
+}
+
+static void
+daemonize()
+{
+    int i,lfp;
+    char str[10];
+    //Alreadt daemon?
+	if(getppid() == 1) {
+	    return;
+	}
+	//Fork.
+	i=fork();
+	if (i<0) exit(1);
+	if (i>0) exit(0);
+
+	//Get new process group.
+	setsid();
+	//Close all descriptors.
+	for (i=getdtablesize(); i >= 0; --i) {
+	     close(i);
+     }
+    //Standard I/O. 
+	i=open("/dev/null", O_RDWR);
+	dup(i);
+	dup(i);
+	//Set file permissions.
+	umask(027);
+	//Change CWD.
+	chdir(RUNNING_DIR);
+	//Open lock file.
+	lfp = open(LOCK_FILE, O_RDWR | O_CREAT, 0640);
+	if (lfp < 0) {
+	    //Can't open lock file.
+	    exit(1);
+	}
+	if (lockf(lfp, F_TLOCK, 0) < 0) {
+	    //Can't lock file.
+	    exit(0);
+    } 
+    //Get pid.
+	sprintf(str, "%d\n", getpid());
+	//Write it.
+	write(lfp, str, strlen(str));
+	//Signals.
+	signal(SIGCHLD, SIG_IGN);
+	signal(SIGTSTP, SIG_IGN);
+	signal(SIGTTOU, SIG_IGN);
+	signal(SIGTTIN, SIG_IGN);
+	signal(SIGHUP, SIG_IGN);
+	//Handle is from libevent.
+	signal(SIGTERM, SIG_IGN);
 }
 
 int
 main(int argc, char **argv)
 {
     char ch;
-    int port, new_port = 0, timeout;
+    int port, timeout;
     bool daemon = false;
     char *conf_name = NULL;
-    pid_t pid, sid;
+    char major[4], minor[4];
+    int dot_pos;
+    dictionary *conf_dic;
     struct event_base *base;
     struct evconnlistener *listener;
     struct sockaddr_in sin;
-    dictionary *conf_dic;
-    char major[4], minor[4];
-    int dot_pos;
+    struct event *term_event;
     
     //Check the input flags.
     while ((ch = getopt(argc, argv, "dvpc:")) != -1) {
@@ -301,23 +365,18 @@ main(int argc, char **argv)
     }
     
     if (daemon) {
-        pid = fork();
-        if (pid < 0) {
-            exit(EXIT_FAILURE);
-        } else if (pid > 0) {
-            exit(EXIT_SUCCESS);
-        }
-        umask(0);
-        sid = setsid();
-        if (sid < 0) {
-            exit(EXIT_FAILURE);
-        }
+        daemonize();
     }
+    
+    //Start logging.
+    openlog("lobbyserv", LOG_PID, LOG_DAEMON);
     
     //Parse PACKAGE_VERSION.
     dot_pos = strcspn(PACKAGE_VERSION, ".");
     if (dot_pos > 3) {
         err(1, "failed to parse PACKAGE_VERSION");
+        syslog(LOG_ALERT, "Failed to parse PACKAGE_VERSION.");
+        return 1;
     }
     strncpy(major, PACKAGE_VERSION, dot_pos);
     major[dot_pos+1] = '\0';
@@ -333,12 +392,14 @@ main(int argc, char **argv)
         conf_dic = iniparser_load(CONF_FILE);
     }
     if (!conf_dic) {
-        err(1, "failed top open config file");
+        syslog(LOG_ALERT, "Can't open config file.");
+        return 1;
     }
 
     port = iniparser_getint(conf_dic, "main:port", 0);
     if (!port) {
-        err(1, "configuration file doesn't contain item 'port'");
+        syslog(LOG_ALERT, "Configuration file doesn't contain item 'port'.");
+        return 1;
     }
         
     timeout = iniparser_getint(conf_dic, "main:timeout", 0);
@@ -352,7 +413,8 @@ main(int argc, char **argv)
     //Make default event base.
     base = event_base_new();
     if (!base) {
-        err(1, "open base event failed");
+        syslog(LOG_ALERT, "Can't create event base.");
+        return 1;
     }
     
     memset(&sin, 0, sizeof(sin));
@@ -365,22 +427,35 @@ main(int argc, char **argv)
         LEV_OPT_CLOSE_ON_FREE|LEV_OPT_REUSEABLE, -1,
         (struct sockaddr*)&sin, sizeof(sin));
     if (!listener) {
-            err(1, "create listener failed");
+        syslog(LOG_ALERT, "Failed to create listening socket.");
+        return 1;
     }
     
     //Set the error callback.
     evconnlistener_set_error_cb(listener, accept_error_cb);
     
-    printf("Starting event loop.\n");
+    //Set up SIGTERM handler.
+    term_event = evsignal_new(base, SIGTERM, sigterm_cb, (void *) base);
+    event_add(term_event, NULL);
+    
+    syslog(LOG_INFO, "Starting main event loop.");
     
     //Start the event loop.	
     event_base_dispatch(base);
     
+    syslog(LOG_INFO, "Shutting down.");
+    
     //Free event base.
     event_base_free(base);
     
+    //Free term_event event.
+    event_free(term_event);
+    
     //Free listener (also closes the socket).	
     free(listener);
+    
+    //Close log.
+    closelog();
     
     return (EXIT_SUCCESS);
 }
