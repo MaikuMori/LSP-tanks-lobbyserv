@@ -24,6 +24,9 @@
 #ifndef CONF_FILE
     #define CONF_FILE "./lts.conf"
 #endif
+#ifndef PACKAGE_VERSION
+    #define PACKAGE_VERSION "0.0"
+#endif
 
 #include "lobby.h"
 #include "client.h"
@@ -41,12 +44,15 @@ readcb(struct bufferevent *bev, void *ctx)
     struct client * c = ctx;
     struct evbuffer *input = bufferevent_get_input(bev);
     enum lobby_packet_type packet_id;
-    
+    struct client * temp_client;
+    //Incoming packets.
     struct lobby_packet_empty empty_packet;
     struct lobby_packet_register register_packet;
     struct lobby_packet_update update_packet;
+    //Output packets.
+    struct lobby_packet_list *list_packet;
     
-    int n;
+    int i, n, item_count, failed;
     
     evbuffer_copyout(input, (void *) &packet_id,
                      sizeof(enum lobby_packet_type));
@@ -56,6 +62,11 @@ readcb(struct bufferevent *bev, void *ctx)
             printf("[%s] Got PING packet!\n",
                 inet_ntoa(c->address.sin_addr));
             n = bufferevent_read(bev, &empty_packet, sizeof(empty_packet));
+            if (n != sizeof(empty_packet)) {
+                printf("[%s] Got PING packet with wrong size.\n",
+                       inet_ntoa(c->address.sin_addr));
+                client_free_client(c);
+            }
             break;
         case REGISTER:
             printf("[%s] Got REGISTER packet!\n",
@@ -65,11 +76,12 @@ readcb(struct bufferevent *bev, void *ctx)
             if (n == sizeof(register_packet)) {
                 if (!c->info) {
                     c->info = malloc(sizeof(struct server_info));
+                    
+                    c->info->server_port = register_packet.server_port;
                     memcpy(c->info->server_name, register_packet.server_name,
-                           sizeof(register_packet));
+                           LOBBY_STR_LEN);
                     //Just in case.
-                    c->info->server_name[255] = '\0';
-                    c->info->server_post = 
+                    c->info->server_name[LOBBY_STR_LEN - 1] = '\0';
                 }
             } else {
                 printf("[%s] Got REGISTER packet with wrong size.\n",
@@ -81,11 +93,100 @@ readcb(struct bufferevent *bev, void *ctx)
             printf("[%s] Got UPDATE packet!\n",
                    inet_ntoa(c->address.sin_addr));
             n = bufferevent_read(bev, &update_packet, sizeof(update_packet));
+            if (n == sizeof(update_packet)) {
+                if (c->info) {
+                    c->info->players_max = update_packet.players_max;
+                    c->info->players_current = update_packet.players_current;
+                    
+                    memcpy(c->info->map_name, update_packet.map_name,
+                           LOBBY_STR_LEN);
+                    //Just in case.
+                    c->info->map_name[LOBBY_STR_LEN - 1] = '\0';
+                    
+                    c->info->map_size_x = update_packet.map_size_x;
+                    c->info->map_size_y = update_packet.map_size_y;
+                } else {
+                    printf("[%s] Got UPDATE packet before REGISTER packet.\n",
+                           inet_ntoa(c->address.sin_addr));
+                    client_free_client(c);
+                }
+            } else {
+                printf("[%s] Got UPDATE packet with wrong size.\n",
+                       inet_ntoa(c->address.sin_addr));
+                client_free_client(c);
+            }
             break;
         case GET_LIST:
             printf("[%s] Got GET_LIST packet!\n",
                    inet_ntoa(c->address.sin_addr));
             n = bufferevent_read(bev, &empty_packet, sizeof(empty_packet));
+            if (n == sizeof(empty_packet)) {
+                item_count = 0;
+                temp_client = all_clients;
+                while(temp_client) {
+                    if (temp_client->info) {
+                        item_count++;
+                    }
+                    temp_client = temp_client->prev;
+                }
+                list_packet = malloc(sizeof(struct lobby_packet_list) + 
+                                     sizeof(struct lobby_list_item) *
+                                     item_count);
+                list_packet->packet_id = LIST;
+                list_packet->item_count = item_count;
+                
+                i = 0;
+                temp_client = all_clients;
+                //Loads of copying (3x per item), could do better but meh.
+                while(temp_client) {
+                    if (temp_client->info) {
+                        //Server info.
+                        memcpy(list_packet->items[i].server_name,
+                               temp_client->info->server_name, LOBBY_STR_LEN);
+                        //Not very portable.
+                        memcpy(&(list_packet->items[i].server_ip[0]),
+                               &(temp_client->address.sin_addr.s_addr),
+                               sizeof(uint32_t));
+                        list_packet->items[i].server_port =
+                               temp_client->info->server_port;
+                        //Players info.
+                        list_packet->items[i].players_max =
+                               temp_client->info->players_max;
+                        list_packet->items[i].players_current =
+                               temp_client->info->players_current;
+                        
+                        //Map info.
+                        memcpy(list_packet->items[i].map_name,
+                               temp_client->info->map_name, LOBBY_STR_LEN);
+                        list_packet->items[i].map_size_x =
+                               temp_client->info->map_size_x;
+                        list_packet->items[i].map_size_y =
+                               temp_client->info->map_size_y;
+                               
+                        i++;
+                    }
+                    temp_client = temp_client->prev;
+                }
+                
+                //Send it.
+                failed = bufferevent_write(c->buf_event,
+                                (const void *) list_packet,
+                                sizeof(struct lobby_packet_list) + 
+                                     sizeof(struct lobby_list_item) *
+                                     list_packet->item_count);
+                if(failed) {
+                    printf("[%s] Failed to send LIST packet.\n",
+                           inet_ntoa(c->address.sin_addr));    
+                    client_free_client(c);          
+                }
+                 
+                //Free the monster.
+                free(list_packet);
+            } else {
+                printf("[%s] Got PING packet with wrong size.\n",
+                       inet_ntoa(c->address.sin_addr));
+                client_free_client(c);
+            }
             break;
         default:
             printf("[%s] Got unknown packet!\n",
@@ -158,7 +259,7 @@ accept_conn_cb(struct evconnlistener *listener,
     if(failed) {
         printf("[%s] Failed to send INFO packet.\n",
                inet_ntoa(c->address.sin_addr));              
-    } 
+    }
 }
 
 static void
@@ -166,7 +267,7 @@ accept_error_cb(struct evconnlistener *listener, void *ctx)
 {
     struct event_base *base = evconnlistener_get_base(listener);
     int err = EVUTIL_SOCKET_ERROR();
-    fprintf(stderr, "Got an error %d (%s) on the listener. "
+    printf("Got an error %d (%s) on the listener. "
             "Shutting down.\n", err, evutil_socket_error_to_string(err));
 
     event_base_loopexit(base, NULL);
@@ -192,12 +293,6 @@ main(int argc, char **argv)
         switch (ch) {
             case 'd':
                 daemon = true;
-                break;
-            case 'v':
-                debug = true;
-                break;
-            case 'p':
-                new_port = atoi(optarg);
                 break;
             case 'c':
                 conf_name = optarg;
@@ -240,16 +335,12 @@ main(int argc, char **argv)
     if (!conf_dic) {
         err(1, "failed top open config file");
     }
-            
-    if (new_port) {
-        port = new_port;
-    } else {
-        port = iniparser_getint(conf_dic, "main:port", 0);
-        if (!port) {
-            err(1, "configuration file doesn't contain item 'port'");
-        }
+
+    port = iniparser_getint(conf_dic, "main:port", 0);
+    if (!port) {
+        err(1, "configuration file doesn't contain item 'port'");
     }
-    
+        
     timeout = iniparser_getint(conf_dic, "main:timeout", 0);
     if (timeout) {
         timeout_interval.tv_sec = timeout;

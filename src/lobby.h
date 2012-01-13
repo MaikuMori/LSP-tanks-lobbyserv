@@ -38,6 +38,9 @@ enum __attribute__((packed)) lobby_packet_type {
     LIST,
     INFO
 };
+//Could add ERROR packet so it's possible to send some error messages
+//back before closing connection. At the moment connection is just
+//dropped if any error is encountered.
 
 //PING packet or GET_LIST packet.
 //Just set the correct packet_id and send.

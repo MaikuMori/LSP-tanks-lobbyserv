@@ -5,7 +5,7 @@
 
 #include "client.h"
 
-static struct client *all_clients;
+struct client *all_clients;
 
 struct client *
 client_new_client(void)

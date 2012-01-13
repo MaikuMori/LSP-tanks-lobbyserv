@@ -31,13 +31,14 @@ static int last_id = 0;
 //Address where all connections connect to.
 static struct sockaddr_in sin;
 
-int connection_new(struct event_base *base, int reg);
-void connection_free(struct connection *con);
-void connection_free_all(void);
-struct connection * connection_get_by_id(int id);
+static int connection_new(struct event_base *base, int reg);
+static void connection_free(struct connection *con);
+static void connection_free_all(void);
+static struct connection * connection_get_by_id(int id);
 
 //Gets called when there is something to read from get server connection.
-void readcb(struct bufferevent *bev, void *ptr)
+static void
+readcb(struct bufferevent *bev, void *ptr)
 {
     struct connection * con = ptr;
     struct lobby_packet_info info_packet;
@@ -54,7 +55,8 @@ void readcb(struct bufferevent *bev, void *ptr)
 }
 
 //Gets called each time it's time to ping the server.
-void pingcb(evutil_socket_t fd, short events, void *ptr)
+static void
+pingcb(evutil_socket_t fd, short events, void *ptr)
 {
     struct connection * con = ptr;
     struct lobby_packet_empty ping_packet;
@@ -70,43 +72,82 @@ void pingcb(evutil_socket_t fd, short events, void *ptr)
 }
 
 //Gets called when there is something to read from get list connection.
-void list_readcb(struct bufferevent *bev, void *ptr)
+static void
+list_readcb(struct bufferevent *bev, void *ptr)
 {
     struct evbuffer *input = bufferevent_get_input(bev);
     enum lobby_packet_type packet_id;
     struct lobby_packet_info info_packet;
-    struct lobby_packet_list list_packet;
-    struct lobby_list_item item;
-    int n;  
+    struct lobby_packet_list * list_packet;
+    int n, i, r;  
     
-    evbuffer_copyout(input, (void *) &packet_id,
-                     sizeof(enum lobby_packet_type));
-    
-    switch (packet_id) {
-        case INFO:
-            n = bufferevent_read(bev, &info_packet, sizeof(info_packet));
-            if (n == sizeof(info_packet)) {
-                printf("-> list: Lobby server version: %d.%d!\n",
-                    info_packet.ver_major, info_packet.ver_minor);
-            } else {
-                printf("-> list: Got info_packet with wrong size!\n");
-            }
+    /*
+         There can be situation where you only get 1 callback when
+        multiple "packets" arrive at the same time. Hence this workaround.
+        Haven't seen this happen on server yet, then again it shouldn't.
+    */
+    while (1) {
+        r = evbuffer_copyout(input, (void *) &packet_id,
+                         sizeof(enum lobby_packet_type));
+        if (r < 1) {
+            //Buffer is empty, no point looping until we get next data.
             break;
-        case LIST:
-            n = bufferevent_read(bev, &list_packet, sizeof(list_packet));
-            if (n != sizeof(list_packet)) {
-                printf("-> list: Got list_packet with wrong size!\n");
-            }
-            bufferevent_free(bev);
-            break;
-        default:
-            printf("-> list: got garbage! (%d)\n", packet_id);
-            bufferevent_free(bev);
+        }
+        
+        switch (packet_id) {
+            case INFO:
+                n = bufferevent_read(bev, &info_packet, sizeof(info_packet));
+                if (n == sizeof(info_packet)) {
+                    printf("-> list: Lobby server version: %d.%d!\n",
+                        info_packet.ver_major, info_packet.ver_minor);
+                } else {
+                    printf("-> list: Got info_packet with wrong size!\n");
+                    bufferevent_free(bev);
+                    return;
+                }
+                break;
+            case LIST:
+                //Allocate without the items.
+                list_packet = malloc(sizeof(struct lobby_packet_list));
+                n = bufferevent_read(bev, list_packet,
+                                     sizeof(struct lobby_packet_list));
+                if (n == sizeof(struct lobby_packet_list)) {
+                    //Expand the structure so it can hold all items.
+                    list_packet = realloc(list_packet,
+                                          sizeof(struct lobby_packet_list) + 
+                                          sizeof(struct lobby_list_item) *
+                                          list_packet->item_count);
+                    bufferevent_read(bev, &(list_packet->items[0]),
+                                     sizeof(struct lobby_list_item) *
+                                     list_packet->item_count);
+                                     
+                    for (i = 0; i < list_packet->item_count; i++) {
+                        printf("-----> Server name: %s, ip: %d.%d.%d.%d\n",
+                               list_packet->items[i].server_name,
+                               list_packet->items[i].server_ip[0],
+                               list_packet->items[i].server_ip[1],
+                               list_packet->items[i].server_ip[2],
+                               list_packet->items[i].server_ip[3]);
+                    }
+                    
+                    
+                } else {
+                    printf("-> list: Got list_packet with wrong size!\n");
+                }
+                bufferevent_free(bev);
+                return;
+                break;
+            default:
+                printf("-> list: got garbage! (%d)\n", packet_id);
+                bufferevent_free(bev);
+                return;
+        }
     }
 }
 
 //General event callback for all server connections.
-void eventcb(struct bufferevent *bev, short events, void *ptr)
+static void
+eventcb(struct bufferevent *bev, short events, void *ptr)
 {
     struct connection * con = ptr;
     struct lobby_packet_register reg_packet;
@@ -149,7 +190,8 @@ void eventcb(struct bufferevent *bev, short events, void *ptr)
 }
 
 //General event callback for get list connection.
-void list_eventcb(struct bufferevent *bev, short events, void *ptr)
+static void
+list_eventcb(struct bufferevent *bev, short events, void *ptr)
 {
     int r;
     struct lobby_packet_empty get_list_packet;
@@ -178,7 +220,8 @@ void list_eventcb(struct bufferevent *bev, short events, void *ptr)
 }
 
 //Handle user input from stdin.
-void input_handler(struct bufferevent *bev, void *ptr)
+static void
+input_handler(struct bufferevent *bev, void *ptr)
 {
     struct event_base *base = ptr;
     struct bufferevent *list_bev;
@@ -298,7 +341,8 @@ void input_handler(struct bufferevent *bev, void *ptr)
     }
 }
 
-int main(void) {
+int
+main(void) {
     struct event_base *base;
     struct bufferevent * inputev;
     
@@ -342,7 +386,8 @@ int main(void) {
 }
 
 //Create a new server connection.
-int connection_new(struct event_base *base, int reg) {
+static int
+connection_new(struct event_base *base, int reg) {
     struct connection * con = malloc(sizeof(struct connection));
     int failed;
     
@@ -383,7 +428,8 @@ int connection_new(struct event_base *base, int reg) {
 }
 
 //Free a single connection.
-void connection_free(struct connection *con) {
+static void
+connection_free(struct connection *con) {
     if(con->prev == NULL) {
         head = con->next;
     } else {
@@ -403,7 +449,8 @@ void connection_free(struct connection *con) {
 }
 
 //Free all connections and the underlaying events.
-void connection_free_all(void) {
+static void
+connection_free_all(void) {
     struct connection *temp = tail;
     
     while(temp) {
@@ -419,7 +466,8 @@ void connection_free_all(void) {
 }
 
 //Find connection by it's ID.
-struct connection * connection_get_by_id(int id) {
+static struct connection *
+connection_get_by_id(int id) {
     struct connection *temp = tail;
     
     while(temp) {

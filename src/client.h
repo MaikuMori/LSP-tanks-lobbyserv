@@ -38,3 +38,6 @@ struct client * client_new_client(void);
 void client_free_client(struct client *c);
 //Free all clients.
 void client_free_all_clients(void);
+
+//Tail of clients list.
+struct client *all_clients;
